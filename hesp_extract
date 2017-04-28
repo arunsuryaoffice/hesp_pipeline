@@ -1,0 +1,262 @@
+#!/usr/bin/python
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from matplotlib.colors import LogNorm
+import numpy, time
+import peakutils
+from astropy.io import fits
+from scipy.ndimage import morphology as morph
+from scipy.ndimage import filters
+import os
+import numpy as np
+from scipy import interpolate
+import progressbar
+from time import sleep
+import ConfigParser
+import pandas as pd
+from os.path import expanduser
+home = expanduser("~")
+
+#Parse the config parameters
+Config=ConfigParser.ConfigParser()
+Config.read(home+'/'+'hesp.config')
+objname=Config.get('Headers','objname')
+objtype=Config.get('Headers','objtype')
+reseltype=Config.get('Headers','reseltype')
+dateobs=Config.get('Headers','dateobs')
+exptime=Config.get('Headers','exptime')
+reselkeylow=Config.get('Keys','reselkeylow')
+reselkeyhigh=Config.get('Keys','reselkeyhigh')
+biaskey=Config.get('Keys','biaskey')
+flatkey=Config.get('Keys','flatkey')
+calibkey=Config.get('Keys','calibkey')
+objectkey=Config.get('Keys','objectkey')
+fits_index=int(Config.get('Fits','index'))
+binsize=float(Config.get('Extraction','binsize'))
+binres=float(Config.get('Extraction','binres'))
+path=Config.get('Config','path')
+
+
+
+
+fl = open('files.txt', 'r')	
+k=fl.readlines()
+bstrt=k.index('BIAS\n')
+ostrt=k.index('OBJECT\n')
+fstrt=k.index('FLAT\n')
+cstrt=k.index('CALIB\n')
+fin=len(k)
+try:
+    biaslist= pd.read_csv('files.txt',nrows=(ostrt-bstrt-3),sep='\s+',header=bstrt+1)
+    biaslist=biaslist.File.value
+except:
+    biaslist=[]
+try:
+    objectlist= pd.read_csv('files.txt',nrows=(fstrt-ostrt-3),sep='\s+',header=ostrt)
+    objectlist=objectlist.File.values
+except:
+    objectlist=[] 
+try:
+    flatlist= pd.read_csv('files.txt',nrows=(cstrt-fstrt-3),delimiter=r"\s+",header=fstrt-1)
+    flatlist=flatlist.File.values
+except:
+    flatlist=[]    
+try:
+    caliblist=pd.read_csv('files.txt',nrows=(fin-cstrt-2),delimiter=r"\s+",header=cstrt-2	)
+    caliblist=caliblist.File.values
+except:
+    caliblist=[]   
+
+
+files=np.concatenate([objectlist,flatlist,caliblist],axis=0)
+
+
+
+for i in files:
+ print 'Extracting File '+ i   
+ hdu= fits.open(i[:-5]+'_pp.fit')
+ scidata=hdu[0].data	 
+ xaxis=numpy.linspace(0,4112,4112)
+ yaxis=numpy.linspace(0,4096,4096)
+ xx,yy=numpy.meshgrid(xaxis,yaxis)
+ f=interpolate.RectBivariateSpline(xaxis, yaxis, scidata)
+ k=numpy.array([])
+ data=numpy.array([])
+ data2=numpy.array([])
+ scattery=numpy.array([])
+ 
+ try :
+	 resel=hdu[0].header[reseltype]
+ except:
+	 print 'Failed extracting Resolution from header..'
+	 print 'Assuming Low Resolution'
+	 resel='0'
+
+ if resel==reselkeylow:
+     fl = open(path+'lowresfibre1.trace', 'r')
+     content=fl.readlines()
+     p=numpy.array([0.0,0.0,0.0])
+     a=0
+     bar = progressbar.ProgressBar(maxval=len(content), widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage(),' ', progressbar.ETA()])
+     print  "Extracting Orders from fibre 1... \n"
+     bar.start()
+     for l in content:
+      bar.update(a)
+      sl=l.split(" ")
+      p[0]=float(sl[0])
+      p[1]=float(sl[2])
+      p[2]=float(sl[4])
+      datadummy=numpy.array([])
+      for x0 in range(0,4096,1):
+       scatbiny=[]
+       scatbinx=[] 
+       y0=p[0]*x0**2+p[1]*x0+p[2]
+       sum=0
+       for pix in numpy.arange(y0-(binsize/2),y0+(binsize/2),binres):
+	scatbiny=numpy.append(scatbiny,pix)
+	y=pix
+	#dydx=2*p[0]*x0+p[1]
+	#x=(-dydx)*(y-y0)+x0 In case of normal binning
+	x=x0
+	scatbinx=numpy.append(scatbinx,x)
+	sum=sum+f(y,x)
+       datadummy=numpy.append(datadummy,sum) 
+      if a==0:
+	data= numpy.hstack((data,datadummy))
+      else: 
+	data= numpy.vstack((data,datadummy))
+      a=a+1  
+     bar.finish()	 
+     print  "Extraction Complete. \n"   
+     hduOut =fits.PrimaryHDU(data)
+     hduOut.header=hdu[0].header
+     hduOut.writeto(i[:-5]+'_fiber1_ec.fit',clobber=True)
+
+
+     data=numpy.array([])
+     fl = open(path+'lowresfibre2.trace', 'r')
+     content=fl.readlines()
+     p=numpy.array([0.0,0.0,0.0])
+     a=0
+     bar = progressbar.ProgressBar(maxval=len(content), widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage(),' ', progressbar.ETA()])
+     print  "Extracting Orders from fibre 2... \n"
+     bar.start()
+     for l in content:
+      bar.update(a)
+      sleep(0.1)
+      sl=l.split(" ")
+      p[0]=float(sl[0])
+      p[1]=float(sl[2])
+      p[2]=float(sl[4])
+      datadummy=numpy.array([])
+      for x0 in range(0,4096,1):
+       scatbiny=[]
+       scatbinx=[] 
+       y0=p[0]*x0**2+p[1]*x0+p[2]
+       sum=0
+       for pix in numpy.arange(y0-(binsize/2),y0+(binsize/2),binres):
+	scatbiny=numpy.append(scatbiny,pix)
+	y=pix
+	#dydx=2*p[0]*x0+p[1]
+	#x=(-dydx)*(y-y0)+x0
+	x=x0
+	scatbinx=numpy.append(scatbinx,x)
+	sum=sum+f(y,x)
+       datadummy=numpy.append(datadummy,sum) 
+
+      if a==0:
+	data= numpy.hstack((data,datadummy))
+      else: 
+	data= numpy.vstack((data,datadummy))
+      a=a+1  
+     bar.finish()	 
+     print  "Extraction Complete. \n"   
+     plt.show()  
+     hduOut =fits.PrimaryHDU(data)
+     hduOut.header=hdu[0].header
+     hduOut.writeto(i[:-5]+'_fiber2_ec.fit',clobber=True)
+ if resel==reselkeyhigh:
+     fl = open(path+'highresfibre1.trace', 'r')
+     content=fl.readlines()
+     p=numpy.array([0.0,0.0,0.0])
+     a=0
+     bar = progressbar.ProgressBar(maxval=len(content), widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage(),' ', progressbar.ETA()])
+     print  "Extracting Orders from fibre 1... \n"
+     bar.start()
+     for l in content:
+      bar.update(a)
+      sl=l.split(" ")
+      p[0]=float(sl[0])
+      p[1]=float(sl[2])
+      p[2]=float(sl[4])
+      datadummy=numpy.array([])
+      for x0 in range(0,4096,1):
+       scatbiny=[]
+       scatbinx=[] 
+       y0=p[0]*x0**2+p[1]*x0+p[2]
+       sum=0
+       for pix in numpy.arange(y0-(binsize/2),y0+(binsize/2),binres):
+	scatbiny=numpy.append(scatbiny,pix)
+	y=pix
+	#dydx=2*p[0]*x0+p[1]
+	#x=(-dydx)*(y-y0)+x0 In case of normal binning
+	x=x0
+	scatbinx=numpy.append(scatbinx,x)
+	sum=sum+f(y,x)
+       datadummy=numpy.append(datadummy,sum) 
+      if a==0:
+	data= numpy.hstack((data,datadummy))
+      else: 
+	data= numpy.vstack((data,datadummy))
+      a=a+1  
+     bar.finish()	 
+     print  "Extraction Complete. \n"   
+     hduOut =fits.PrimaryHDU(data)
+     hduOut.header=hdu[0].header
+     hduOut.writeto(i[:-5]+'_fiber1_ec.fit',clobber=True)
+
+
+     data=numpy.array([])
+     fl = open(path+'highresfibre2.trace', 'r')
+     content=fl.readlines()
+     p=numpy.array([0.0,0.0,0.0])
+     a=0
+     bar = progressbar.ProgressBar(maxval=len(content), widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage(),' ', progressbar.ETA()])
+     print  "Extracting Orders from fibre 2... \n"
+     bar.start()
+     for l in content:
+      bar.update(a)
+      sleep(0.1)
+      sl=l.split(" ")
+      p[0]=float(sl[0])
+      p[1]=float(sl[2])
+      p[2]=float(sl[4])
+      datadummy=numpy.array([])
+      for x0 in range(0,4096,1):
+       scatbiny=[]
+       scatbinx=[] 
+       y0=p[0]*x0**2+p[1]*x0+p[2]
+       sum=0
+       for pix in numpy.arange(y0-(binsize/2),y0+(binsize/2),binres):
+	scatbiny=numpy.append(scatbiny,pix)
+	y=pix
+	#dydx=2*p[0]*x0+p[1]
+	#x=(-dydx)*(y-y0)+x0
+	x=x0
+	scatbinx=numpy.append(scatbinx,x)
+	sum=sum+f(y,x)
+       datadummy=numpy.append(datadummy,sum) 
+
+      if a==0:
+	data= numpy.hstack((data,datadummy))
+      else: 
+	data= numpy.vstack((data,datadummy))
+      a=a+1  
+     bar.finish()	 
+     print  "Extraction Complete. \n"   
+     plt.show()  
+     hduOut =fits.PrimaryHDU(data)
+     hduOut.header=hdu[0].header
+     hduOut.writeto(i[:-5]+'_fiber2_ec.fit',clobber=True)     
+ 
+
